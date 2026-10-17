@@ -1,0 +1,12 @@
+# Dependencies & build output
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+*.log
+Thumbs.db
+Desktop.ini
