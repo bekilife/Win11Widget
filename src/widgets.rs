@@ -93,34 +93,37 @@ pub fn render(g: &Gfx, id: Id, d: &Data, w: f32, z: &mut Zones) {
 
 const GREEN: Color = Color::hex(0x30d158);
 
+/// 24 h mini chart, coloured like the change.
+fn sparkline(g: &Gfx, pts: &[f64], r: Rect, c: Color) {
+    if pts.len() < 2 {
+        return;
+    }
+    let (lo, hi) = pts.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    let span = (hi - lo).max(hi.abs() * 1e-6).max(1e-12);
+    let n = (pts.len() - 1) as f32;
+    let line: Vec<(f32, f32)> = pts
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (r.x + r.w * i as f32 / n, r.y + r.h - ((v - lo) / span) as f32 * r.h))
+        .collect();
+    g.fill_under(&line, r.y, r.y + r.h + 4.0, c.alpha(0.32), c.alpha(0.0));
+    g.stroke_poly(&line, 1.6, c);
+    let last = line[line.len() - 1];
+    g.fill_circle(last.0, last.1, 2.2, c);
+}
+
 fn rates_w(g: &Gfx, d: &Data, w: f32) {
+    use crate::rates::fmt;
     let r = d.rates;
     let (x0, x1) = (16.0, w - 16.0);
     g.text("КУРСЫ", 12.0).weight(700).ls(0.6).color(RED).draw(x0, 13.0);
-    let src = "mig.kz · Binance";
-    let sw = g.text(src, 11.0).color(FG3).measure();
-    g.text(src, 11.0).color(FG3).draw(x1 - sw, 13.0 + g.baseline(12.0) - g.baseline(11.0));
+    if let Some(t) = &r.updated {
+        let s = format!("{:02}:{:02}", t.wHour, t.wMinute);
+        let sw = g.text(&s, 11.0).color(FG3).measure();
+        g.text(&s, 11.0).color(FG3).draw(x1 - sw, 13.0 + g.baseline(12.0) - g.baseline(11.0));
+    }
 
-    let change = |c: f64| -> (String, Color) {
-        let sign = if c > 0.0 {
-            "+"
-        } else if c < 0.0 {
-            "−"
-        } else {
-            ""
-        };
-        (
-            format!("{sign}{}%", crate::rates::fmt(c.abs(), 2)),
-            if c > 0.0 {
-                GREEN
-            } else if c < 0.0 {
-                RED
-            } else {
-                FG2
-            },
-        )
-    };
-    let usd = |p: f64| {
+    let usd_text = |p: f64| {
         let dec = if p >= 1000.0 {
             0
         } else if p >= 10.0 {
@@ -130,71 +133,114 @@ fn rates_w(g: &Gfx, d: &Data, w: f32) {
         } else {
             4
         };
-        crate::rates::fmt(p, dec)
+        format!("${}", fmt(p, dec))
     };
-    let dash = || ("–".to_string(), String::new(), FG2);
-    type Row<'a> = (&'a str, &'a str, &'a str, (String, String, Color));
-    let rows: [Row; 3] = [
-        (
-            "₸",
-            "Доллар",
-            "USD → KZT · mig.kz",
-            r.usd.map_or_else(dash, |(b, s)| {
-                (
-                    format!("{} / {} ₸", crate::rates::fmt(b, 1), crate::rates::fmt(s, 1)),
-                    "покупка / продажа".into(),
-                    FG2,
-                )
-            }),
-        ),
-        (
-            "₿",
-            "Биткойн",
-            "BTC → USD · Binance",
-            r.btc.map_or_else(dash, |t| {
-                let (c, col) = change(t.change);
-                (format!("${}", usd(t.price)), c, col)
-            }),
-        ),
-        (
-            "G",
-            "Gram",
-            "GRAM → USD · Binance",
-            r.gram.map_or_else(dash, |t| {
-                let (c, col) = change(t.change);
-                (format!("${}", usd(t.price)), c, col)
-            }),
-        ),
+    let change = |c: f64| {
+        let sign = if c > 0.0 {
+            "+"
+        } else if c < 0.0 {
+            "−"
+        } else {
+            ""
+        };
+        let col = if c > 0.0 {
+            GREEN
+        } else if c < 0.0 {
+            RED
+        } else {
+            Color::white(0.16)
+        };
+        (format!("{sign}{}%", fmt(c.abs(), 2)), col)
+    };
+
+    struct Row<'a> {
+        glyph: &'a str,
+        tint: Color,
+        name: &'a str,
+        sub: &'a str,
+        price: Option<String>,
+        pill: Option<(String, Color)>,
+        spark: &'a [f64],
+    }
+    let rows = [
+        Row {
+            glyph: "$",
+            tint: Color::hex(0x2fa05a),
+            name: "Доллар",
+            sub: "USD · mig.kz",
+            price: r.usd.map(|p| format!("{} ₸", fmt(p, 1))),
+            pill: r.usd.map(|_| ("продажа".to_string(), Color::white(0.16))),
+            spark: &[],
+        },
+        Row {
+            glyph: "₿",
+            tint: Color::hex(0xf7931a),
+            name: "Биткойн",
+            sub: "BTC · Binance",
+            price: r.btc.as_ref().map(|t| usd_text(t.price)),
+            pill: r.btc.as_ref().map(|t| change(t.change)),
+            spark: r.btc.as_ref().map_or(&[], |t| t.spark.as_slice()),
+        },
+        Row {
+            glyph: "G",
+            tint: Color::hex(0x0098ea),
+            name: "Gram",
+            sub: "GRAM · Binance",
+            price: r.gram.as_ref().map(|t| usd_text(t.price)),
+            pill: r.gram.as_ref().map(|t| change(t.change)),
+            spark: r.gram.as_ref().map_or(&[], |t| t.spark.as_slice()),
+        },
     ];
 
-    let top = 13.0 + g.normal_lh(12.0) + 8.0;
-    let rh = (170.0 - 14.0 - top) / 3.0;
+    let top = 13.0 + g.normal_lh(12.0) + 6.0;
+    let rh = (170.0 - 12.0 - top) / 3.0;
     let (l1, l2) = (g.normal_lh(14.0), g.normal_lh(11.5));
-    for (i, (sym, name, sub, (value, note, note_c))) in rows.iter().enumerate() {
+    let lp = g.normal_lh(15.0);
+    for (i, row) in rows.iter().enumerate() {
         let y = top + i as f32 * rh;
         if i > 0 {
-            g.fill_rect(Rect::new(x0, y, x1 - x0, 1.0), HAIR);
+            g.fill_rect(Rect::new(x0 + 40.0, y, x1 - x0 - 40.0, 1.0), HAIR);
         }
         let cy = y + rh / 2.0;
-        g.fill_circle(x0 + 15.0, cy, 15.0, Color::white(0.12));
-        let lh = g.normal_lh(15.0);
-        g.text(sym, 15.0).weight(600).width(30.0).align(Align::Center).draw(x0, cy - lh / 2.0);
 
-        let ty = cy - (l1 + l2) / 2.0;
-        let vw = g.text(value, 17.0).weight(600).measure();
-        let nw = g.text(note, 11.5).measure();
-        let right_w = vw.max(nw);
-        let lx = x0 + 30.0 + 10.0;
-        let lw = x1 - right_w - 10.0 - lx;
-        g.text(name, 14.0).weight(600).width(lw).ellipsis().draw(lx, ty);
-        g.text(sub, 11.5).color(FG2).width(lw).ellipsis().draw(lx, ty + l1);
+        // coin
+        g.fill_circle(x0 + 15.0, cy, 15.0, row.tint);
+        let gl = g.normal_lh(15.0);
+        g.text(row.glyph, 15.0).weight(700).width(30.0).align(Align::Center).draw(x0, cy - gl / 2.0);
 
-        let lv = g.normal_lh(17.0);
-        let vy = cy - (lv + l2) / 2.0;
-        g.text(value, 17.0).weight(600).draw(x1 - vw, vy);
-        if !note.is_empty() {
-            g.text(note, 11.5).weight(600).color(*note_c).draw(x1 - nw, vy + lv);
+        // price + pill (right column)
+        let block = lp + 3.0 + 17.0;
+        let py = cy - block / 2.0;
+        let price = row.price.clone().unwrap_or_else(|| "–".into());
+        let pw = g.text(&price, 15.0).weight(600).measure();
+        g.text(&price, 15.0).weight(600).draw(x1 - pw, py);
+        let mut right_w = pw;
+        if let Some((txt, col)) = &row.pill {
+            let tw = g.text(txt, 11.0).weight(700).measure();
+            let pill_w = (tw + 12.0).max(52.0);
+            let pr = Rect::new(x1 - pill_w, py + lp + 3.0, pill_w, 17.0);
+            g.fill_rrect(pr, 5.0, *col);
+            let lh11 = g.normal_lh(11.0);
+            g.text(txt, 11.0).weight(700).width(pill_w).align(Align::Center).draw(pr.x, pr.y + (17.0 - lh11) / 2.0);
+            right_w = right_w.max(pill_w);
         }
+
+        // mini chart
+        let chart = Rect::new(x1 - right_w - 14.0 - 64.0, cy - 11.0, 64.0, 22.0);
+        if !row.spark.is_empty() {
+            let col = match &row.pill {
+                Some((_, c)) if *c == RED => RED,
+                _ => GREEN,
+            };
+            sparkline(g, row.spark, chart, col);
+        }
+
+        // name
+        let lx = x0 + 40.0;
+        let lw = chart.x - 8.0 - lx;
+        let ty = cy - (l1 + l2) / 2.0;
+        g.text(row.name, 14.0).weight(600).width(lw).ellipsis().draw(lx, ty);
+        g.text(row.sub, 11.5).color(FG2).width(lw).ellipsis().draw(lx, ty + l1);
     }
 }
 
