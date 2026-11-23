@@ -47,10 +47,6 @@
 
 Требуется Windows 10 1809+ или Windows 11.
 
-### Переход с версии 1.x (Tauri)
-
-Настройки (`%APPDATA%\com.win11widget.desktop\settings.json`) и запись автозапуска `Win11Widget` те же — города и позиции виджетов сохранятся. Закройте старую версию (трей → «Выход») и замените `%LOCALAPPDATA%\Win11Widget\win11widget.exe` новым файлом.
-
 ## Использование
 
 - **Перетаскивание** — за любое место виджета; позиция запоминается.
@@ -85,7 +81,7 @@ src/
   weather.rs    Open-Meteo
   rates.rs      курсы: mig.kz и Binance
   wallpaper.rs  обои и размытие
-  settings.rs   settings.json (формат версии 1.x)
+  settings.rs   settings.json
   platform.rs   рабочий стол, мониторы, автозапуск
 ```
 

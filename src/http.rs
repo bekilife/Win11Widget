@@ -18,7 +18,7 @@ impl Drop for Handle {
 /// GET https://{host}{path}; returns the body when the status is 200.
 pub fn get(host: &str, path: &str) -> Option<String> {
     unsafe {
-        let agent = wide("Win11Widget/2.0");
+        let agent = wide("Win11Widget/1.0");
         let session = Handle(WinHttpOpen(
             PCWSTR(agent.as_ptr()),
             WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,

@@ -1,4 +1,4 @@
-//! settings.json — same file and format as the Tauri version
+//! settings.json — same file and format as before
 //! (%APPDATA%\com.win11widget.desktop\settings.json), so existing settings carry over.
 
 use std::{fs, path::PathBuf};
