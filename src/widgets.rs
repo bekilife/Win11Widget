@@ -571,7 +571,7 @@ fn blocks(d: &Data) -> Vec<Block> {
         let mut parts =
             vec![format!("VRAM {:.1} из {} ГБ", gpu.mem_used as f64 / GIB, (gpu.mem_total as f64 / GIB).round())];
         if let Some(p) = gpu.power {
-            parts.push(format!("{} Вт", p.round()));
+            parts.push(format!("мощн. {p}%"));
         }
         if let Some(f) = gpu.fan.filter(|f| *f > 0) {
             parts.push(format!("вент. {f}%"));

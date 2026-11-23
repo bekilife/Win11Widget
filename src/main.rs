@@ -438,7 +438,6 @@ impl App {
             if id == Id::System {
                 self.expansion = None;
                 EXPANDED.with(|e| e.set(0));
-                system::set_full(false);
                 system::set_active(false);
             }
             unsafe {
@@ -471,8 +470,7 @@ impl App {
             // Mark as expanded first so the full layout is measured.
             self.expansion = Some(Expansion { orig, at: (orig.x, orig.y) });
             EXPANDED.with(|e| e.set(hwnd.0 as isize));
-            system::set_full(true);
-            let _ = self.sys_wake.send(());
+            let _ = self.sys_wake.send(()); // fresh numbers for the full view
             unsafe {
                 let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
@@ -501,7 +499,6 @@ impl App {
     fn collapse(&mut self) {
         let Some(e) = self.expansion.take() else { return };
         EXPANDED.with(|c| c.set(0));
-        system::set_full(false);
         let Some(i) = self.idx_of(Id::System) else { return };
         let hwnd = self.widgets[i].hwnd;
         let cur = self.widgets[i].rect;

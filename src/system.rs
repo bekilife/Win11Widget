@@ -1,19 +1,16 @@
 //! Full system status: CPU, memory, GPU, network throughput, uptime and every mounted disk —
 //! read straight from Win32 (no extra crates, no drivers, no admin rights).
-//! GPU basics come from D3DKMT (any vendor); NVIDIA's NVML adds power and fan speed, but it
-//! costs ~20 MB of RAM, so it is loaded only while the full view is open.
 
 use std::time::Instant;
 
 use windows::{
-    core::{s, PCWSTR},
+    core::PCWSTR,
     Win32::{
-        Foundation::{CloseHandle, FreeLibrary, FILETIME, HMODULE},
+        Foundation::{CloseHandle, FILETIME},
         NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2},
         Storage::FileSystem::*,
         System::{
             Ioctl::*,
-            LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32},
             Power::{CallNtPowerInformation, ProcessorInformation},
             Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ},
             SystemInformation::{GetTickCount64, GlobalMemoryStatusEx, MEMORYSTATUSEX},
@@ -50,8 +47,8 @@ pub struct GpuInfo {
     pub mem_total: u64,
     /// °C
     pub temp: Option<u32>,
-    /// watts
-    pub power: Option<f64>,
+    /// percent of the board power limit
+    pub power: Option<u32>,
     /// percent
     pub fan: Option<u32>,
 }
@@ -81,10 +78,6 @@ pub struct Monitor {
     disks: Vec<DiskInfo>,
     disks_at: Option<Instant>,
     kmt: Option<crate::gpu::Kmt>,
-    /// Loaded while the full view is open (None without an NVIDIA driver).
-    nvml: Option<Nvml>,
-    nvml_tried: bool,
-    collapsed_at: Option<Instant>,
 }
 
 fn ft(f: FILETIME) -> u64 {
@@ -271,9 +264,6 @@ impl Monitor {
             disks: Vec::new(),
             disks_at: None,
             kmt: crate::gpu::Kmt::new(),
-            nvml: None,
-            nvml_tried: false,
-            collapsed_at: None,
         }
     }
 
@@ -312,145 +302,7 @@ impl Monitor {
             net_up: up as f64 / secs,
             uptime: unsafe { GetTickCount64() } / 1000,
             disks: self.disks.clone(),
-            gpus: self.gpus(),
-        }
-    }
-
-    fn gpus(&mut self) -> Vec<GpuInfo> {
-        let basic = self.kmt.as_mut().map(|k| k.gpus()).unwrap_or_default();
-        if FULL.load(Relaxed) {
-            self.collapsed_at = None;
-            if self.nvml.is_none() && !self.nvml_tried {
-                self.nvml_tried = true;
-                self.nvml = Nvml::load();
-            }
-            if let Some(n) = &self.nvml {
-                let full = n.gpus();
-                if !full.is_empty() {
-                    return full;
-                }
-            }
-        } else if self.nvml.is_some() || self.nvml_tried {
-            // Give the memory back a little after the full view closes.
-            let t = *self.collapsed_at.get_or_insert_with(Instant::now);
-            if t.elapsed().as_secs() >= 15 {
-                self.nvml = None;
-                self.nvml_tried = false;
-                self.collapsed_at = None;
-            }
-        }
-        basic
-    }
-}
-
-// ---------- NVIDIA NVML (nvml.dll ships with the driver; loaded at runtime) ----------
-
-type Dev = *mut core::ffi::c_void;
-type FnInit = unsafe extern "C" fn() -> i32;
-type FnCount = unsafe extern "C" fn(*mut u32) -> i32;
-type FnHandle = unsafe extern "C" fn(u32, *mut Dev) -> i32;
-type FnName = unsafe extern "C" fn(Dev, *mut u8, u32) -> i32;
-type FnU32Pair = unsafe extern "C" fn(Dev, *mut [u32; 2]) -> i32;
-type FnMem = unsafe extern "C" fn(Dev, *mut [u64; 3]) -> i32;
-type FnTemp = unsafe extern "C" fn(Dev, u32, *mut u32) -> i32;
-type FnU32 = unsafe extern "C" fn(Dev, *mut u32) -> i32;
-type FnFan2 = unsafe extern "C" fn(Dev, u32, *mut u32) -> i32;
-
-struct Nvml {
-    lib: HMODULE,
-    shutdown: FnInit,
-    count: FnCount,
-    handle: FnHandle,
-    name: FnName,
-    util: FnU32Pair,
-    mem: FnMem,
-    temp: FnTemp,
-    power: FnU32,
-    fan: Option<FnFan2>,
-}
-
-unsafe impl Send for Nvml {}
-
-impl Drop for Nvml {
-    fn drop(&mut self) {
-        unsafe {
-            (self.shutdown)();
-            let _ = FreeLibrary(self.lib);
-        }
-    }
-}
-
-impl Nvml {
-    fn load() -> Option<Nvml> {
-        unsafe {
-            let lib: HMODULE = LoadLibraryExW(PCWSTR(wide("nvml.dll").as_ptr()), None, LOAD_LIBRARY_SEARCH_SYSTEM32)
-                .or_else(|_| {
-                    let pf = std::env::var("ProgramW6432").unwrap_or_else(|_| r"C:\Program Files".into());
-                    let p = wide(&format!(r"{pf}\NVIDIA Corporation\NVSMI\nvml.dll"));
-                    LoadLibraryExW(PCWSTR(p.as_ptr()), None, Default::default())
-                })
-                .ok()?;
-            macro_rules! sym {
-                ($name:expr, $t:ty) => {
-                    std::mem::transmute::<_, $t>(GetProcAddress(lib, $name)?)
-                };
-            }
-            let init = sym!(s!("nvmlInit_v2"), FnInit);
-            if init() != 0 {
-                return None;
-            }
-            Some(Nvml {
-                lib,
-                shutdown: sym!(s!("nvmlShutdown"), FnInit),
-                count: sym!(s!("nvmlDeviceGetCount_v2"), FnCount),
-                handle: sym!(s!("nvmlDeviceGetHandleByIndex_v2"), FnHandle),
-                name: sym!(s!("nvmlDeviceGetName"), FnName),
-                util: sym!(s!("nvmlDeviceGetUtilizationRates"), FnU32Pair),
-                mem: sym!(s!("nvmlDeviceGetMemoryInfo"), FnMem),
-                temp: sym!(s!("nvmlDeviceGetTemperature"), FnTemp),
-                power: sym!(s!("nvmlDeviceGetPowerUsage"), FnU32),
-                fan: GetProcAddress(lib, s!("nvmlDeviceGetFanSpeed_v2")).map(|f| std::mem::transmute::<_, FnFan2>(f)),
-            })
-        }
-    }
-
-    fn gpus(&self) -> Vec<GpuInfo> {
-        unsafe {
-            let mut n = 0u32;
-            if (self.count)(&mut n) != 0 {
-                return Vec::new();
-            }
-            (0..n)
-                .filter_map(|i| {
-                    let mut d: Dev = std::ptr::null_mut();
-                    if (self.handle)(i, &mut d) != 0 {
-                        return None;
-                    }
-                    let mut name = [0u8; 96];
-                    (self.name)(d, name.as_mut_ptr(), name.len() as u32);
-                    let nl = name.iter().position(|&c| c == 0).unwrap_or(0);
-                    let name = String::from_utf8_lossy(&name[..nl]);
-                    let mut util = [0u32; 2];
-                    let load = if (self.util)(d, &mut util) == 0 { util[0] } else { 0 };
-                    let mut mem = [0u64; 3]; // total, free, used
-                    let mem_ok = (self.mem)(d, &mut mem) == 0;
-                    let mut t = 0u32;
-                    let temp = ((self.temp)(d, 0, &mut t) == 0).then_some(t);
-                    let mut mw = 0u32;
-                    let power = ((self.power)(d, &mut mw) == 0).then_some(mw as f64 / 1000.0);
-                    let mut f = 0u32;
-                    let fan = self.fan.and_then(|fan| (fan(d, 0, &mut f) == 0).then_some(f));
-                    Some(GpuInfo {
-                        name: name.trim_start_matches("NVIDIA ").to_string(),
-                        load,
-                        mem_used: if mem_ok { mem[2] } else { 0 },
-                        mem_total: if mem_ok { mem[0] } else { 0 },
-                        temp,
-                        power,
-                        fan,
-                    })
-                })
-                .collect()
+            gpus: self.kmt.as_mut().map(|k| k.gpus()).unwrap_or_default(),
         }
     }
 }
@@ -460,16 +312,10 @@ impl Nvml {
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-static FULL: AtomicBool = AtomicBool::new(false);
 
 /// Polling is paused while the system widget is hidden.
 pub fn set_active(on: bool) {
     ACTIVE.store(on, Relaxed);
-}
-
-/// The full (hover) view is open: include NVIDIA power / fan data.
-pub fn set_full(on: bool) {
-    FULL.store(on, Relaxed);
 }
 
 /// Poll every 2 s on a background thread (disk and GPU queries can block briefly).

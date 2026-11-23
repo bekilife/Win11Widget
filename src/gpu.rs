@@ -1,6 +1,6 @@
-//! GPU load, VRAM and temperature through D3DKMT — the kernel graphics interface Task
-//! Manager uses. Works for any vendor, needs no driver SDK and costs almost no memory
-//! (NVIDIA's NVML costs ~20 MB, so it is only loaded while the full view is open).
+//! GPU load, VRAM, temperature, power and fan through D3DKMT — the kernel graphics interface
+//! Task Manager uses. Works for any vendor and costs almost no memory (NVIDIA's NVML would
+//! add ~20 MB that the driver never gives back).
 
 use windows::{
     Wdk::Graphics::Direct3D::*,
@@ -19,6 +19,7 @@ struct Adapter {
     prev: Vec<i64>,
     prev_at: std::time::Instant,
     vram_total: u64,
+    max_fan_rpm: u32,
 }
 
 pub struct Kmt {
@@ -99,6 +100,8 @@ impl Kmt {
                     prev: Vec::new(),
                     prev_at: std::time::Instant::now(),
                     vram_total,
+                    max_fan_rpm: query_info::<D3DKMT_ADAPTER_PERFDATACAPS>(a.hAdapter, KMTQAITYPE_ADAPTERPERFDATA_CAPS)
+                        .map_or(0, |c| c.MaxFanRPM),
                 };
                 ad.prev = ad.node_times();
                 adapters.push(ad);
@@ -147,14 +150,19 @@ impl Adapter {
         }
         let perf: Option<D3DKMT_ADAPTER_PERFDATA> = unsafe { query_info(self.handle, KMTQAITYPE_ADAPTERPERFDATA) };
         let temp = perf.map(|p| p.Temperature / 10).filter(|t| *t > 0);
+        // Power is reported in tenths of a percent of the board power limit.
+        let power = perf.map(|p| (p.Power + 5) / 10).filter(|p| *p > 0);
+        let fan = perf
+            .filter(|_| self.max_fan_rpm > 0)
+            .map(|p| ((p.FanRPM as u64 * 100 + self.max_fan_rpm as u64 / 2) / self.max_fan_rpm as u64).min(100) as u32);
         GpuInfo {
             name: self.name.clone(),
             load: (load * 100.0).round().clamp(0.0, 100.0) as u32,
             mem_used: used,
             mem_total: self.vram_total,
             temp,
-            power: None,
-            fan: None,
+            power,
+            fan,
         }
     }
 }
