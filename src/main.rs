@@ -14,6 +14,7 @@ mod json;
 mod layout;
 mod media;
 mod platform;
+mod rates;
 mod settings;
 mod system;
 mod wallpaper;
@@ -60,37 +61,34 @@ pub fn wide(s: &str) -> Vec<u16> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Id {
-    Clock,
+    Rates,
     Media,
     Weather,
-    Calendar,
     System,
 }
 
 impl Id {
-    pub const ALL: [Id; 5] = [Id::Clock, Id::Media, Id::Weather, Id::Calendar, Id::System];
+    pub const ALL: [Id; 4] = [Id::Rates, Id::Media, Id::Weather, Id::System];
     pub fn name(self) -> &'static str {
         match self {
-            Id::Clock => "clock",
+            Id::Rates => "rates",
             Id::Media => "media",
             Id::Weather => "weather",
-            Id::Calendar => "calendar",
             Id::System => "system",
         }
     }
     pub fn title(self) -> &'static str {
         match self {
-            Id::Clock => "Часы",
+            Id::Rates => "Курсы",
             Id::Media => "Сейчас играет",
             Id::Weather => "Погода",
-            Id::Calendar => "Календарь",
             Id::System => "Система",
         }
     }
     /// Default logical size.
     pub fn size(self) -> (f64, f64) {
         match self {
-            Id::Clock | Id::Calendar => (172.0, 170.0),
+            Id::Rates => (360.0, 170.0),
             Id::Media | Id::System => (360.0, 150.0),
             Id::Weather => (360.0, 300.0),
         }
@@ -98,7 +96,7 @@ impl Id {
 }
 
 /// Default stacking: rows top-to-bottom, wrapping into a new column to the left.
-const LAYOUT: &[&[Id]] = &[&[Id::Clock, Id::Calendar], &[Id::Media], &[Id::Weather], &[Id::System]];
+const LAYOUT: &[&[Id]] = &[&[Id::Rates], &[Id::Media], &[Id::Weather], &[Id::System]];
 
 // messages
 const WM_TRAY: u32 = WM_APP + 1;
@@ -109,6 +107,7 @@ const WM_WALL: u32 = WM_APP + 5;
 pub const WM_SEARCH: u32 = WM_APP + 6;
 const WM_OPEN_CITIES: u32 = WM_APP + 7;
 const WM_RERENDER: u32 = WM_APP + 8;
+const WM_RATES: u32 = WM_APP + 9;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 // timers (controller window)
@@ -116,6 +115,8 @@ const T_MINUTE: usize = 1;
 const T_PROGRESS: usize = 2;
 const T_WEATHER: usize = 3;
 const T_SAVE: usize = 4;
+const T_RATES: usize = 5;
+const RATES_EVERY_MS: u32 = 60 * 1000;
 // timers (system widget)
 const T_OPEN: usize = 10;
 const T_CLOSE: usize = 11;
@@ -158,6 +159,7 @@ pub struct App {
     widgets: Vec<Widget>,
     pub ctrl: HWND,
     weather: HashMap<String, weather::Forecast>,
+    rates: rates::Rates,
     stats: Option<system::Stats>,
     media: media::MediaState,
     art: Option<ID2D1Bitmap>,
@@ -235,12 +237,12 @@ impl App {
 
     fn data(&self, hover: Option<Hit>, pressed: Option<Hit>) -> Data<'_> {
         Data {
-            now: unsafe { GetLocalTime() },
             unix_ms: unix_ms(),
             media: &self.media,
             art: self.art.as_ref(),
             cities: &self.settings.cities,
             weather: &self.weather,
+            rates: &self.rates,
             stats: self.stats.as_ref(),
             hover,
             pressed,
@@ -293,7 +295,7 @@ impl App {
             let d = self.data(hover, pressed);
             self.gfx.draw(&mut surf, rect.w, rect.h, scale, |g| {
                 widgets::card(g, lw, lh, glass.as_ref().map(|(b, m)| (b, *m)));
-                widgets::render(g, id, &d, lw, lh, &mut zones);
+                widgets::render(g, id, &d, lw, &mut zones);
             });
         }
         surf.present(hwnd, Some((rect.x, rect.y)));
@@ -545,7 +547,13 @@ impl App {
         });
     }
 
+    fn fetch_rates(&self) {
+        let ctrl = self.ctrl.0 as isize;
+        std::thread::spawn(move || post(HWND(ctrl as _), WM_RATES, rates::fetch()));
+    }
+
     fn refresh_all(&mut self) {
+        self.fetch_rates();
         self.load_wallpaper();
         self.fetch_weather();
     }
@@ -708,14 +716,14 @@ fn run_command(cmd: usize) {
         CMD_QUIT => {
             with(|a| a.quit());
         }
-        c if (CMD_TOGGLE..CMD_TOGGLE + 5).contains(&c) => {
+        c if (CMD_TOGGLE..CMD_TOGGLE + Id::ALL.len()).contains(&c) => {
             let id = Id::ALL[c - CMD_TOGGLE];
             with(|a| {
                 let vis = a.idx_of(id).is_some();
                 a.set_visible(id, !vis);
             });
         }
-        c if (CMD_HIDE..CMD_HIDE + 5).contains(&c) => {
+        c if (CMD_HIDE..CMD_HIDE + Id::ALL.len()).contains(&c) => {
             let id = Id::ALL[c - CMD_HIDE];
             with(|a| a.set_visible(id, false));
         }
@@ -752,8 +760,6 @@ extern "system" fn ctrl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                     T_MINUTE => {
                         arm_minute_timer(hwnd);
                         with(|a| {
-                            a.paint_id(Id::Clock);
-                            a.paint_id(Id::Calendar);
                             a.paint_id(Id::Weather); // local times of other cities
                         });
                     }
@@ -766,6 +772,9 @@ extern "system" fn ctrl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                     }
                     T_WEATHER => {
                         with(|a| a.fetch_weather());
+                    }
+                    T_RATES => {
+                        with(|a| a.fetch_rates());
                     }
                     T_SAVE => {
                         let _ = KillTimer(Some(hwnd), T_SAVE);
@@ -808,6 +817,18 @@ extern "system" fn ctrl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                     let (k, f) = *b;
                     a.weather.insert(k, f);
                     a.update(Id::Weather);
+                });
+                LRESULT(0)
+            }
+            WM_RATES => {
+                let r = take::<rates::Rates>(lp);
+                with(|a| {
+                    // keep the last good value of a source that failed this time
+                    let r = *r;
+                    a.rates.usd = r.usd.or(a.rates.usd);
+                    a.rates.btc = r.btc.or(a.rates.btc);
+                    a.rates.gram = r.gram.or(a.rates.gram);
+                    a.paint_id(Id::Rates);
                 });
                 LRESULT(0)
             }
@@ -1156,6 +1177,7 @@ fn main() {
             widgets: Vec::new(),
             ctrl,
             weather: HashMap::new(),
+            rates: Default::default(),
             stats: None,
             media: Default::default(),
             art: None,
@@ -1177,11 +1199,13 @@ fn main() {
             }
             a.load_wallpaper();
             a.fetch_weather();
+            a.fetch_rates();
         });
         add_tray(ctrl);
         arm_minute_timer(ctrl);
         SetTimer(Some(ctrl), T_PROGRESS, 1000, None);
         SetTimer(Some(ctrl), T_WEATHER, WEATHER_EVERY_MS, None);
+        SetTimer(Some(ctrl), T_RATES, RATES_EVERY_MS, None);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {

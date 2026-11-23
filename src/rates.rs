@@ -1,0 +1,84 @@
+//! Exchange rates: USD→KZT from the mig.kz exchange office, BTC and GRAM in USD from Binance.
+
+use crate::{http, json::Json};
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ticker {
+    pub price: f64,
+    /// 24 h change, percent
+    pub change: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Rates {
+    /// mig.kz: tenge per dollar (buy, sell)
+    pub usd: Option<(f64, f64)>,
+    pub btc: Option<Ticker>,
+    pub gram: Option<Ticker>,
+}
+
+/// Fetch everything; a source that fails stays None.
+pub fn fetch() -> Rates {
+    let (usd, binance) = std::thread::scope(|s| {
+        let m = s.spawn(mig);
+        let b = binance();
+        (m.join().ok().flatten(), b)
+    });
+    let pick = |sym: &str| binance.as_ref().and_then(|v| v.iter().find(|(s, _)| s == sym).map(|(_, t)| *t));
+    Rates { usd, btc: pick("BTCUSDT"), gram: pick("GRAMUSDT") }
+}
+
+fn binance() -> Option<Vec<(String, Ticker)>> {
+    let body = http::get("api.binance.com", "/api/v3/ticker/24hr?symbols=%5B%22BTCUSDT%22,%22GRAMUSDT%22%5D")?;
+    let j = Json::parse(&body)?;
+    let num = |v: &Json| v.str().and_then(|s| s.parse::<f64>().ok());
+    Some(
+        j.arr()
+            .iter()
+            .filter_map(|t| {
+                let sym = t.get("symbol").str()?.to_string();
+                Some((
+                    sym,
+                    Ticker { price: num(t.get("lastPrice"))?, change: num(t.get("priceChangePercent")).unwrap_or(0.0) },
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// The rates table on mig.kz: `<td class="buy …">453.3</td><td class="currency">USD</td><td class="sell …">455.9</td>`.
+fn mig() -> Option<(f64, f64)> {
+    let html = http::get("mig.kz", "/")?;
+    let at = html.find(">USD<")?;
+    let cell_value = |s: &str| -> Option<f64> {
+        let start = s.find('>')? + 1;
+        let end = start + s[start..].find('<')?;
+        s[start..end].trim().replace(',', ".").parse().ok()
+    };
+    let before = &html[..at];
+    let buy = cell_value(&before[before.rfind("class=\"buy")?..])?;
+    let after = &html[at..];
+    let sell = cell_value(&after[after.find("class=\"sell")?..])?;
+    Some((buy, sell))
+}
+
+/// Russian-style number: thin-space thousands, decimal comma.
+pub fn fmt(v: f64, decimals: usize) -> String {
+    let s = format!("{:.*}", decimals, v.abs());
+    let (int, frac) = s.split_once('.').map_or((s.as_str(), ""), |(a, b)| (a, b));
+    let mut out = String::new();
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            out.push('\u{202f}');
+        }
+        out.push(c);
+    }
+    if !frac.is_empty() {
+        out.push(',');
+        out.push_str(frac);
+    }
+    if v < 0.0 {
+        out.insert(0, '−');
+    }
+    out
+}

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use windows::Win32::{Foundation::SYSTEMTIME, Graphics::Direct2D::ID2D1Bitmap};
+use windows::Win32::Graphics::Direct2D::ID2D1Bitmap;
 use windows_numerics::Matrix3x2;
 
 use crate::{
@@ -35,12 +35,12 @@ pub enum Hit {
 }
 
 pub struct Data<'a> {
-    pub now: SYSTEMTIME,
     pub unix_ms: f64,
     pub media: &'a MediaState,
     pub art: Option<&'a ID2D1Bitmap>,
     pub cities: &'a [City],
     pub weather: &'a HashMap<String, Forecast>,
+    pub rates: &'a crate::rates::Rates,
     pub stats: Option<&'a Stats>,
     pub hover: Option<Hit>,
     pub pressed: Option<Hit>,
@@ -74,10 +74,9 @@ pub fn height(g: &Gfx, id: Id, d: &Data) -> f32 {
     }
 }
 
-pub fn render(g: &Gfx, id: Id, d: &Data, w: f32, h: f32, z: &mut Zones) {
+pub fn render(g: &Gfx, id: Id, d: &Data, w: f32, z: &mut Zones) {
     match id {
-        Id::Clock => clock(g, d, h),
-        Id::Calendar => calendar(g, d),
+        Id::Rates => rates_w(g, d, w),
         Id::Media => media(g, d, z),
         Id::Weather => weather_w(g, d, w, z),
         Id::System => {
@@ -90,96 +89,111 @@ pub fn render(g: &Gfx, id: Id, d: &Data, w: f32, h: f32, z: &mut Zones) {
     }
 }
 
-// ---------- dates ----------
+// ---------- rates ----------
 
-const WEEKDAYS: [&str; 7] = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
-const MONTHS: [&str; 12] = [
-    "январь",
-    "февраль",
-    "март",
-    "апрель",
-    "май",
-    "июнь",
-    "июль",
-    "август",
-    "сентябрь",
-    "октябрь",
-    "ноябрь",
-    "декабрь",
-];
-const MONTHS_GEN: [&str; 12] = [
-    "января",
-    "февраля",
-    "марта",
-    "апреля",
-    "мая",
-    "июня",
-    "июля",
-    "августа",
-    "сентября",
-    "октября",
-    "ноября",
-    "декабря",
-];
+const GREEN: Color = Color::hex(0x30d158);
 
-fn days_in_month(y: i32, m: u16) -> u16 {
-    match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        _ if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
-        _ => 28,
-    }
-}
+fn rates_w(g: &Gfx, d: &Data, w: f32) {
+    let r = d.rates;
+    let (x0, x1) = (16.0, w - 16.0);
+    g.text("КУРСЫ", 12.0).weight(700).ls(0.6).color(RED).draw(x0, 13.0);
+    let src = "mig.kz · Binance";
+    let sw = g.text(src, 11.0).color(FG3).measure();
+    g.text(src, 11.0).color(FG3).draw(x1 - sw, 13.0 + g.baseline(12.0) - g.baseline(11.0));
 
-// ---------- clock ----------
-
-fn clock(g: &Gfx, d: &Data, h: f32) {
-    let t = &d.now;
-    let lh_wd = g.normal_lh(12.0);
-    let lh_date = g.normal_lh(14.0);
-    let lh_year = g.normal_lh(12.0);
-    let free = ((h - 27.0) - (lh_wd + 54.0 + lh_date + 1.0 + lh_year)).max(0.0) / 2.0;
-    let y_time = 13.0 + lh_wd + free;
-    let y_date = y_time + 54.0 + free;
-
-    let wd = WEEKDAYS[t.wDayOfWeek as usize % 7].to_uppercase();
-    g.text(&wd, 12.0).weight(700).ls(0.6).color(RED).draw(16.0, 13.0);
-    let time = format!("{:02}:{:02}", t.wHour, t.wMinute);
-    g.text(&time, 54.0).weight(300).lh(54.0).ls(-1.0).draw(14.0, y_time);
-    let date = format!("{} {}", t.wDay, MONTHS_GEN[(t.wMonth as usize + 11) % 12]);
-    g.text(&date, 14.0).color(FG2).draw(16.0, y_date);
-    g.text(&t.wYear.to_string(), 12.0).color(FG3).draw(16.0, y_date + lh_date + 1.0);
-}
-
-// ---------- calendar ----------
-
-fn calendar(g: &Gfx, d: &Data) {
-    let t = &d.now;
-    let month = MONTHS[(t.wMonth as usize + 11) % 12].to_uppercase();
-    g.text(&month, 12.0).weight(700).ls(0.6).color(RED).draw(16.0, 13.0);
-
-    let top = 13.0 + g.normal_lh(12.0) + 6.0;
-    let (x0, gw) = (14.0, 172.0 - 14.0 - 13.0);
-    let cw = gw / 7.0;
-    let cell = |i: usize| (x0 + (i % 7) as f32 * cw, top + (i / 7) as f32 * 19.0);
-    for (i, hd) in ["П", "В", "С", "Ч", "П", "С", "В"].iter().enumerate() {
-        let (x, y) = cell(i);
-        g.text(hd, 9.5).weight(700).color(FG3).lh(18.0).width(cw).align(Align::Center).draw(x, y);
-    }
-    // Monday-first offset of the 1st of the month.
-    let first_dow = (t.wDayOfWeek as i32 - (t.wDay as i32 - 1)).rem_euclid(7);
-    let lead = ((first_dow + 6) % 7) as usize;
-    for day in 1..=days_in_month(t.wYear as i32, t.wMonth) {
-        let i = 7 + lead + day as usize - 1;
-        let (x, y) = cell(i);
-        let col = i % 7;
-        let s = day.to_string();
-        if day == t.wDay {
-            g.fill_circle(x + cw / 2.0, y + 9.0, 9.5, RED);
-            g.text(&s, 11.0).weight(700).lh(18.0).width(cw).align(Align::Center).draw(x, y);
+    let change = |c: f64| -> (String, Color) {
+        let sign = if c > 0.0 {
+            "+"
+        } else if c < 0.0 {
+            "−"
         } else {
-            let c = if col >= 5 { FG2 } else { FG1 };
-            g.text(&s, 11.0).weight(500).color(c).lh(18.0).width(cw).align(Align::Center).draw(x, y);
+            ""
+        };
+        (
+            format!("{sign}{}%", crate::rates::fmt(c.abs(), 2)),
+            if c > 0.0 {
+                GREEN
+            } else if c < 0.0 {
+                RED
+            } else {
+                FG2
+            },
+        )
+    };
+    let usd = |p: f64| {
+        let dec = if p >= 1000.0 {
+            0
+        } else if p >= 10.0 {
+            2
+        } else if p >= 1.0 {
+            3
+        } else {
+            4
+        };
+        crate::rates::fmt(p, dec)
+    };
+    let dash = || ("–".to_string(), String::new(), FG2);
+    type Row<'a> = (&'a str, &'a str, &'a str, (String, String, Color));
+    let rows: [Row; 3] = [
+        (
+            "₸",
+            "Доллар",
+            "USD → KZT · mig.kz",
+            r.usd.map_or_else(dash, |(b, s)| {
+                (
+                    format!("{} / {} ₸", crate::rates::fmt(b, 1), crate::rates::fmt(s, 1)),
+                    "покупка / продажа".into(),
+                    FG2,
+                )
+            }),
+        ),
+        (
+            "₿",
+            "Биткойн",
+            "BTC → USD · Binance",
+            r.btc.map_or_else(dash, |t| {
+                let (c, col) = change(t.change);
+                (format!("${}", usd(t.price)), c, col)
+            }),
+        ),
+        (
+            "G",
+            "Gram",
+            "GRAM → USD · Binance",
+            r.gram.map_or_else(dash, |t| {
+                let (c, col) = change(t.change);
+                (format!("${}", usd(t.price)), c, col)
+            }),
+        ),
+    ];
+
+    let top = 13.0 + g.normal_lh(12.0) + 8.0;
+    let rh = (170.0 - 14.0 - top) / 3.0;
+    let (l1, l2) = (g.normal_lh(14.0), g.normal_lh(11.5));
+    for (i, (sym, name, sub, (value, note, note_c))) in rows.iter().enumerate() {
+        let y = top + i as f32 * rh;
+        if i > 0 {
+            g.fill_rect(Rect::new(x0, y, x1 - x0, 1.0), HAIR);
+        }
+        let cy = y + rh / 2.0;
+        g.fill_circle(x0 + 15.0, cy, 15.0, Color::white(0.12));
+        let lh = g.normal_lh(15.0);
+        g.text(sym, 15.0).weight(600).width(30.0).align(Align::Center).draw(x0, cy - lh / 2.0);
+
+        let ty = cy - (l1 + l2) / 2.0;
+        let vw = g.text(value, 17.0).weight(600).measure();
+        let nw = g.text(note, 11.5).measure();
+        let right_w = vw.max(nw);
+        let lx = x0 + 30.0 + 10.0;
+        let lw = x1 - right_w - 10.0 - lx;
+        g.text(name, 14.0).weight(600).width(lw).ellipsis().draw(lx, ty);
+        g.text(sub, 11.5).color(FG2).width(lw).ellipsis().draw(lx, ty + l1);
+
+        let lv = g.normal_lh(17.0);
+        let vy = cy - (lv + l2) / 2.0;
+        g.text(value, 17.0).weight(600).draw(x1 - vw, vy);
+        if !note.is_empty() {
+            g.text(note, 11.5).weight(600).color(*note_c).draw(x1 - nw, vy + lv);
         }
     }
 }

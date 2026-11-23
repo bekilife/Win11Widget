@@ -6,7 +6,7 @@
 
 **Виджеты рабочего стола для Windows 11 в стиле macOS**
 
-Часы · Календарь · Сейчас играет · Погода · Система
+Курсы · Сейчас играет · Погода · Система
 
 [![Build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?logo=windows11&logoColor=white)
@@ -24,8 +24,7 @@
 
 | Виджет | Что показывает |
 |---|---|
-| **Часы** | Время, день недели, дата |
-| **Календарь** | Месяц, неделя с понедельника, сегодняшний день отмечен |
+| **Курсы** | Доллар к тенге (покупка / продажа в обменнике mig.kz), биткойн и Gram к доллару с Binance с изменением за сутки. Обновляется раз в минуту |
 | **Сейчас играет** | Обложка, трек, исполнитель, прогресс и кнопки ⏮ ⏯ ⏭ для любого плеера: Spotify, Яндекс Музыка, YouTube в браузере, VLC и др. |
 | **Погода** | Основной город с прогнозом на 6 часов и список других городов с местным временем. Клик по городу делает его основным |
 | **Система** | Компактно: кольца процессора, памяти и видеокарты. При наведении раскрывается полная версия: модель CPU, ОЗУ, GPU с температурой и VRAM, сеть, время работы, все диски |
@@ -65,6 +64,7 @@
 |---|---|
 | Окна виджетов | Слоистые окна Win32 (`WS_EX_LAYERED`) с попиксельной прозрачностью, владелец — окно рабочего стола (`Progman`) |
 | Отрисовка | Direct2D (программный растеризатор, без видеоустройства) и DirectWrite, шрифт Segoe UI Variable |
+| Курсы | Страница [mig.kz](https://mig.kz) (USD) и публичный API Binance (`BTCUSDT`, `GRAMUSDT`) через WinHTTP |
 | Погода и поиск городов | [Open-Meteo](https://open-meteo.com) через WinHTTP — бесплатно, без ключа |
 | Сейчас играет | Windows `GlobalSystemMediaTransportControls` (тот же источник, что у системной панели громкости) |
 | CPU, память, сеть, диски | Win32 API напрямую |
@@ -83,6 +83,7 @@ src/
   gpu.rs        видеокарта через D3DKMT
   media.rs      «Сейчас играет»
   weather.rs    Open-Meteo
+  rates.rs      курсы: mig.kz и Binance
   wallpaper.rs  обои и размытие
   settings.rs   settings.json (формат версии 1.x)
   platform.rs   рабочий стол, мониторы, автозапуск
@@ -92,7 +93,7 @@ src/
 
 ## Конфиденциальность
 
-Приложение ничего не собирает и не отправляет, кроме запросов погоды и поиска городов в Open-Meteo (в запросе только координаты выбранных городов или поисковая строка). Телеметрии нет.
+Приложение ничего не собирает и не отправляет. Сетевые запросы — только погода и поиск городов в Open-Meteo (в запросе только координаты выбранных городов или поисковая строка) и курсы: главная страница mig.kz и публичный API Binance. Телеметрии нет.
 
 ## Ограничения
 
@@ -125,6 +126,6 @@ cargo clippy --release -- -D warnings
 
 ## English
 
-**Win11Widget** brings macOS-style desktop widgets to Windows 11: clock, calendar, now playing, weather (Open-Meteo, no API key) and a system monitor (CPU, RAM, GPU with temperature, network, all drives). Widgets live on the desktop layer with a frosted-glass look, snap to an even 16 px grid and are managed from the tray. Native Win32 in Rust (Direct2D + DirectWrite, no WebView): a single ~600 KB executable using about 13 MB of RAM.
+**Win11Widget** brings macOS-style desktop widgets to Windows 11: exchange rates (USD/KZT from mig.kz, BTC and GRAM from Binance), now playing, weather (Open-Meteo, no API key) and a system monitor (CPU, RAM, GPU with temperature, network, all drives). Widgets live on the desktop layer with a frosted-glass look, snap to an even 16 px grid and are managed from the tray. Native Win32 in Rust (Direct2D + DirectWrite, no WebView): a single ~600 KB executable using about 13 MB of RAM.
 
 Download `win11widget.exe` from [Releases](../../releases/latest), or build it with `cargo build --release`. The UI is in Russian.
