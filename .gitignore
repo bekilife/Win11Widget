@@ -10,3 +10,6 @@ dist/
 *.log
 Thumbs.db
 Desktop.ini
+
+# Native build output
+/target/
