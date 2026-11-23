@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src-tauri/icons/128x128.png" width="96" alt="Win11Widget">
+<img src="assets/logo.png" width="96" alt="Win11Widget">
 
 # Win11Widget
 
@@ -10,7 +10,7 @@
 
 [![Build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?logo=windows11&logoColor=white)
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
+![Win32](https://img.shields.io/badge/Win32-native-0078D4)
 ![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -36,17 +36,21 @@
 - **Живут на рабочем столе** — не перекрывают окна, не пропадают по Win+D, нет в панели задач и Alt+Tab.
 - **Сетка** — одинаковые отступы 16 px; при перетаскивании виджет примагничивается к соседям и краям экрана; если виджет меняет высоту, нижние сдвигаются следом.
 - **Иконка в трее** — включение и выключение виджетов, список городов, автозапуск, «Расставить заново».
-- **Лёгкий** — установщик около 1,2 МБ, без фоновых служб и сторонних драйверов.
+- **Лёгкий** — один процесс и один exe около 600 КБ, ~13 МБ памяти; без WebView2, фоновых служб и сторонних драйверов.
 
 ## Установка
 
-1. Скачайте `Win11Widget_x.y.z_x64-setup.exe` со страницы [Releases](../../releases/latest).
-2. Запустите. Права администратора не нужны — установка в профиль пользователя.
-3. Виджеты появятся у правого края экрана, иконка — в трее.
+1. Скачайте `win11widget.exe` со страницы [Releases](../../releases/latest).
+2. Положите в любую папку, например `%LOCALAPPDATA%\Win11Widget`, и запустите. Установка и права администратора не нужны.
+3. Виджеты появятся у правого края экрана, иконка — в трее. Автозапуск включается в меню трея.
 
-> Установщик не подписан цифровой подписью, поэтому SmartScreen может показать предупреждение: «Подробнее» → «Выполнить в любом случае».
+> Файл не подписан цифровой подписью, поэтому SmartScreen может показать предупреждение: «Подробнее» → «Выполнить в любом случае».
 
-Требуется Windows 10 1809+ или Windows 11 с WebView2 Runtime (в Windows 11 уже есть).
+Требуется Windows 10 1809+ или Windows 11.
+
+### Переход с версии 1.x (Tauri)
+
+Настройки (`%APPDATA%\com.win11widget.desktop\settings.json`) и запись автозапуска `Win11Widget` те же — города и позиции виджетов сохранятся. Закройте старую версию (трей → «Выход») и замените `%LOCALAPPDATA%\Win11Widget\win11widget.exe` новым файлом.
 
 ## Использование
 
@@ -59,25 +63,29 @@
 
 | Задача | Решение |
 |---|---|
-| Окна виджетов | [Tauri 2](https://tauri.app) + WebView2, прозрачные окна без рамки, владелец — окно рабочего стола (`Progman`) |
-| Интерфейс | HTML, CSS и JavaScript без фреймворков |
-| Погода и поиск городов | [Open-Meteo](https://open-meteo.com) — бесплатно, без ключа |
+| Окна виджетов | Слоистые окна Win32 (`WS_EX_LAYERED`) с попиксельной прозрачностью, владелец — окно рабочего стола (`Progman`) |
+| Отрисовка | Direct2D (программный растеризатор, без видеоустройства) и DirectWrite, шрифт Segoe UI Variable |
+| Погода и поиск городов | [Open-Meteo](https://open-meteo.com) через WinHTTP — бесплатно, без ключа |
 | Сейчас играет | Windows `GlobalSystemMediaTransportControls` (тот же источник, что у системной панели громкости) |
-| CPU, память, сеть, диски | [`sysinfo`](https://crates.io/crates/sysinfo) |
-| Видеокарта | NVIDIA NVML через [`nvml-wrapper`](https://crates.io/crates/nvml-wrapper) |
-| «Стекло» | Обои рабочего стола читаются один раз, кэшируются и размываются на `<canvas>` ровно под окном |
+| CPU, память, сеть, диски | Win32 API напрямую |
+| Видеокарта | D3DKMT (как в «Диспетчере задач»): загрузка, VRAM, температура; NVIDIA NVML — мощность и вентилятор, подгружается только пока «Система» раскрыта |
+| «Стекло» | Обои читаются через WIC, уменьшаются в 4 раза, размываются один раз; виджет рисует кусок под собой |
 
 ```
-src/                  интерфейс (по одному окну на виджет)
-  widget.html|js|css  все виджеты; тип выбирается параметром ?w=
-  weather.js          Open-Meteo и SVG-иконки погоды
-  cities.html|js      окно редактирования городов
-src-tauri/src/
-  lib.rs              окна, трей, настройки, команды
-  layout.rs           сетка, примагничивание, раскрытие «Системы»
-  system.rs           CPU, RAM, GPU, сеть, диски
-  media.rs            «Сейчас играет»
-  platform.rs         Win32: привязка к рабочему столу, путь к обоям
+src/
+  main.rs       окна, трей, меню, таймеры, перетаскивание
+  widgets.rs    внешний вид каждого виджета
+  cities.rs     окно редактирования городов
+  gfx.rs        Direct2D/DirectWrite, слоистые окна
+  icons.rs      векторные иконки (погода, плеер, система)
+  layout.rs     сетка, примагничивание, раскрытие «Системы»
+  system.rs     CPU, RAM, сеть, диски, NVML
+  gpu.rs        видеокарта через D3DKMT
+  media.rs      «Сейчас играет»
+  weather.rs    Open-Meteo
+  wallpaper.rs  обои и размытие
+  settings.rs   settings.json (формат версии 1.x)
+  platform.rs   рабочий стол, мониторы, автозапуск
 ```
 
 Настройки хранятся в `%APPDATA%\com.win11widget.desktop\settings.json`.
@@ -89,27 +97,24 @@ src-tauri/src/
 ## Ограничения
 
 - Только Windows.
-- Данные видеокарты — только NVIDIA; для AMD и Intel вместо третьего кольца показывается диск C.
+- Встроенные видеокарты (без своей видеопамяти) не показываются — вместо третьего кольца показывается диск C. Мощность и вентилятор — только для NVIDIA.
 - Температура процессора не показывается: в Windows она доступна только через драйвер с правами администратора.
 
 ## Сборка из исходников
 
-Нужны [Rust](https://rustup.rs) (stable), [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) с компонентом «Разработка классических приложений на C++» и [Node.js](https://nodejs.org) 20+.
+Нужны [Rust](https://rustup.rs) (stable) и [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) с компонентом «Разработка классических приложений на C++».
 
 ```bash
 git clone https://github.com/bekilife/Win11Widget.git
 cd Win11Widget
-npm ci
-npm run dev      # запуск в режиме разработки
-npm run build    # установщик: src-tauri/target/release/bundle/nsis/
+cargo build --release    # target/release/win11widget.exe
 ```
 
 Проверки, которые выполняет CI:
 
 ```bash
-cd src-tauri
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --release -- -D warnings
 ```
 
 ## Лицензия
@@ -120,6 +125,6 @@ cargo clippy -- -D warnings
 
 ## English
 
-**Win11Widget** brings macOS-style desktop widgets to Windows 11: clock, calendar, now playing, weather (Open-Meteo, no API key) and a system monitor (CPU, RAM, NVIDIA GPU with temperature, network, all drives). Widgets live on the desktop layer with a frosted-glass look, snap to an even 16 px grid and are managed from the tray. Built with Tauri 2, Rust and plain JavaScript; the installer is about 1.2 MB.
+**Win11Widget** brings macOS-style desktop widgets to Windows 11: clock, calendar, now playing, weather (Open-Meteo, no API key) and a system monitor (CPU, RAM, GPU with temperature, network, all drives). Widgets live on the desktop layer with a frosted-glass look, snap to an even 16 px grid and are managed from the tray. Native Win32 in Rust (Direct2D + DirectWrite, no WebView): a single ~600 KB executable using about 13 MB of RAM.
 
-Download the installer from [Releases](../../releases/latest), or build it yourself with `npm ci && npm run build`. The UI is in Russian.
+Download `win11widget.exe` from [Releases](../../releases/latest), or build it with `cargo build --release`. The UI is in Russian.

@@ -491,7 +491,7 @@ fn ram_pct(s: &Stats) -> f64 {
 }
 
 fn disk_pct(d: &crate::system::DiskInfo) -> f64 {
-    (d.total - d.available) as f64 / d.total as f64 * 100.0
+    d.total.saturating_sub(d.available) as f64 / d.total.max(1) as f64 * 100.0
 }
 
 fn system_mini(g: &Gfx, d: &Data) {
