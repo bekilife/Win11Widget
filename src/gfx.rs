@@ -391,59 +391,6 @@ impl Gfx {
         }
     }
 
-    fn poly(&self, pts: &[(f32, f32)], close_to: Option<f32>) -> Option<ID2D1PathGeometry> {
-        let (first, rest) = pts.split_first()?;
-        unsafe {
-            let geo = self.factory.CreatePathGeometry().ok()?;
-            let sink = geo.Open().ok()?;
-            let filled = close_to.is_some();
-            sink.BeginFigure(
-                v2(first.0, first.1),
-                if filled { D2D1_FIGURE_BEGIN_FILLED } else { D2D1_FIGURE_BEGIN_HOLLOW },
-            );
-            for p in rest {
-                sink.AddLine(v2(p.0, p.1));
-            }
-            if let Some(base) = close_to {
-                let last = pts[pts.len() - 1];
-                sink.AddLine(v2(last.0, base));
-                sink.AddLine(v2(first.0, base));
-            }
-            sink.EndFigure(if filled { D2D1_FIGURE_END_CLOSED } else { D2D1_FIGURE_END_OPEN });
-            sink.Close().ok()?;
-            Some(geo)
-        }
-    }
-
-    /// Polyline with round joins and caps.
-    pub fn stroke_poly(&self, pts: &[(f32, f32)], width: f32, c: Color) {
-        if let Some(geo) = self.poly(pts, None) {
-            unsafe { self.rt.DrawGeometry(&geo, self.brush(c), width, &self.round) }
-        }
-    }
-
-    /// Area under a polyline down to `base`, filled with a vertical gradient.
-    pub fn fill_under(&self, pts: &[(f32, f32)], top: f32, base: f32, c0: Color, c1: Color) {
-        let Some(geo) = self.poly(pts, Some(base)) else { return };
-        unsafe {
-            let stops = [
-                D2D1_GRADIENT_STOP { position: 0.0, color: c0.d2d() },
-                D2D1_GRADIENT_STOP { position: 1.0, color: c1.d2d() },
-            ];
-            let Ok(coll) = self.rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) else {
-                return;
-            };
-            let Ok(b) = self.rt.CreateLinearGradientBrush(
-                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: v2(0.0, top), endPoint: v2(0.0, base) },
-                None,
-                &coll,
-            ) else {
-                return;
-            };
-            self.rt.FillGeometry(&geo, &b, None);
-        }
-    }
-
     /// CSS `box-shadow: inset 0 1px 0 color` on a rounded rectangle: the sliver between the
     /// shape and the same shape moved down by 1 px.
     pub fn inset_top_highlight(&self, r: Rect, rad: f32, c: Color) {

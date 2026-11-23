@@ -825,18 +825,9 @@ extern "system" fn ctrl_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LR
                 with(|a| {
                     // keep the last good value of a source that failed this time
                     let r = *r;
-                    let keep_spark = |new: Option<rates::Ticker>, old: &Option<rates::Ticker>| {
-                        new.map(|mut t| {
-                            if t.spark.is_empty() {
-                                t.spark = old.as_ref().map(|o| o.spark.clone()).unwrap_or_default();
-                            }
-                            t
-                        })
-                    };
                     a.rates.usd = r.usd.or(a.rates.usd);
-                    a.rates.btc = keep_spark(r.btc, &a.rates.btc).or(a.rates.btc.take());
-                    a.rates.gram = keep_spark(r.gram, &a.rates.gram).or(a.rates.gram.take());
-                    a.rates.updated = Some(GetLocalTime());
+                    a.rates.btc = r.btc.or(a.rates.btc.take());
+                    a.rates.gram = r.gram.or(a.rates.gram.take());
                     a.paint_id(Id::Rates);
                 });
                 LRESULT(0)
