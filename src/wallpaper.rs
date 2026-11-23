@@ -57,6 +57,7 @@ pub fn build(mons: &[(RECT, f32)]) -> Vec<Wall> {
             let sigma = BLUR * sf as f64 * SCALE;
             blur(&mut img, sigma);
             saturate(&mut img, SATURATE);
+            normalize(&mut img);
             Some(Wall { mon, img })
         })
         .collect()
@@ -109,6 +110,21 @@ fn box_pass(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: usize, horiz: boo
                 acc[c] = acc[c] + src[add + c] as u32 - src[sub + c] as u32;
             }
         }
+    }
+}
+
+/// Make the glass look the same on any wallpaper: brightness is mapped into a fixed dark
+/// range and colour is toned down, so only a hint of the wallpaper's hue and texture stays.
+fn normalize(img: &mut Image) {
+    const BASE: f32 = 0.11; // luminance of a black wallpaper
+    const RANGE: f32 = 0.07; // extra luminance for a white one
+    const TINT: f32 = 0.30; // share of the original colour kept
+    for p in img.px.chunks_exact_mut(4) {
+        let (b, g, r) = (p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0);
+        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let t = BASE + RANGE * lum;
+        let map = |c: f32| ((t + (c - lum) * TINT).clamp(0.0, 1.0) * 255.0).round() as u8;
+        (p[0], p[1], p[2]) = (map(b), map(g), map(r));
     }
 }
 
